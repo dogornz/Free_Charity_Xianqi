@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0", user-scalable="no"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <title>Trang Chủ - Cờ Tướng Từ Thiện</title>
+  </head>
+  <body>
+    <!-- Door Opening Effect -->
+    <div class="door door-left"></div>
+    <div class="door door-right"></div>
+
+    <div class="dashboard-container"></div>
+
+    <script>
+      // Ngăn zoom Ctrl + scroll
+      document.addEventListener(
+        "wheel",
+        function (e) {
+          if (e.ctrlKey) {
+            e.preventDefault();
+          }
+        },
+        { passive: false },
+      );
+
+      // Ngăn zoom Ctrl ++, Ctrl --, Ctrl 0
+      document.addEventListener("keydown", function (e) {
+        if (e.ctrlKey && (e.key === "+" || e.key === "-" || e.key === "0")) {
+          e.preventDefault();
+        }
+      });
+
+      window.addEventListener("load", function () {
+        document.body.classList.add("active");
+      });
+    </script>
+  </body>
+</html>
