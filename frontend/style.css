@@ -121,7 +121,24 @@ body.mobile {
   filter: drop-shadow(0 0 20px rgba(194, 151, 151, 0.9))
     drop-shadow(0 0 40px rgba(0, 0, 0, 0.6));
 }
-
+.btn-watchmatch {
+  background-image: url("../assets/desktop/watchmatch.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-color: transparent;
+  background-position: center;
+  box-sizing: border-box;
+  width: 400px;
+  height: 300px;
+  cursor: pointer;
+  z-index: 2;
+  transition: all 0.3s ease;
+}
+.btn-watchmatch:hover {
+  transform: scale(1.05);
+  filter: drop-shadow(0 0 20px rgba(194, 151, 151, 0.9))
+    drop-shadow(0 0 40px rgba(0, 0, 0, 0.6));
+}
 /* ================== GAME PAGE STYLES ================== */
 :root {
   /* DESKTOP DEFAULT */
