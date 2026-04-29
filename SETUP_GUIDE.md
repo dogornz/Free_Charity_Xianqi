@@ -57,6 +57,51 @@ USE xiangqi_db;
 
 Server sẽ tự động tạo bảng khi khởi động.
 
+### 3.1 Chạy Database Migration (Để Sử Dụng Tính Năng Cài Đặt) 🆕
+
+Để sử dụng tính năng độ sáng, âm thanh, và tự động phát nhạc, bạn cần thêm các cột vào database.
+
+**Các tùy chọn:**
+
+#### Tùy chọn 1: Sử dụng MySQL Workbench hoặc phpMyAdmin
+1. Mở MySQL Workbench hoặc phpMyAdmin
+2. Kết nối đến database `xiangqi_db`
+3. Chạy file migration: `backend/migrations/001-add-settings-columns.sql`
+4. Hoặc chạy các lệnh SQL trực tiếp:
+
+```sql
+ALTER TABLE user_profiles 
+ADD COLUMN brightness INT DEFAULT 80,
+ADD COLUMN volume INT DEFAULT 50,
+ADD COLUMN sound_enabled BOOLEAN DEFAULT TRUE,
+ADD COLUMN auto_play BOOLEAN DEFAULT TRUE;
+```
+
+#### Tùy chọn 2: Sử dụng MySQL Command Line
+
+```bash
+# Windows (XAMPP)
+cd "C:\xampp\mysql\bin"
+mysql -u root -p xiangqi_db < "path/to/backend/migrations/001-add-settings-columns.sql"
+
+# macOS/Linux
+mysql -u root -p xiangqi_db < path/to/backend/migrations/001-add-settings-columns.sql
+```
+
+#### Tùy chọn 3: Sử dụng Thư Mục MySQL (XAMPP)
+
+```bash
+# Sao chép file migration vào thư mục XAMPP
+# Sau đó mở MySQL Shell và chạy lệnh trên
+```
+
+#### Kiểm Tra Migration Thành Công:
+```sql
+SHOW COLUMNS FROM user_profiles WHERE Field IN ('brightness', 'volume', 'sound_enabled', 'auto_play');
+```
+
+Nếu bạn thấy 4 cột đó, migration đã thành công ✅
+
 ### 4. Khởi Chạy Server
 
 ```bash
@@ -98,9 +143,10 @@ Server sẽ chạy trên `http://localhost:3000`
 - wins
 - losses
 - draws
-- brightness (0-100, default 50)
-- sound_enabled (boolean)
+- brightness (0-100, default 80)
+- sound_enabled (boolean, default true)
 - volume (0-100, default 50)
+- auto_play (boolean, default true) 🆕
 - created_at
 - updated_at
 ```
@@ -151,6 +197,11 @@ Server sẽ chạy trên `http://localhost:3000`
 - Headers: `Authorization: Bearer <token>`
 - Body: `{ soundEnabled: boolean, volume: 0-100 }`
 
+#### Cập Nhật Tự Động Phát Nhạc 🆕
+- **PUT** `/api/auth/auto-play`
+- Headers: `Authorization: Bearer <token>`
+- Body: `{ autoPlay: boolean }`
+
 #### Xêp Hạng
 - **GET** `/api/auth/leaderboard?limit=10&offset=0`
 - Response: `{ success, players: [...] }`
@@ -199,15 +250,34 @@ Server sẽ chạy trên `http://localhost:3000`
 
 ## 📊 Tính Năng Người Dùng
 
+### Cài Đặt (Settings Modal) 🆕
+Tất cả các cài đặt được tập hợp vào một modal cài đặt:
+- Nhấn nút "Cài đặt" trong header để mở modal
+- Modal có thể đóng bằng cách click nút X hoặc click bên ngoài modal
+
 ### Độ Sáng
 - Slider từ 0 đến 100
+- **Mặc định: 80%** 🆕 (trước đây là 50%)
 - Thay đổi filter brightness của toàn trang
 - Lưu tự động vào database
 
 ### Âm Thanh
 - Slider từ 0 đến 100
+- Mặc định: 50%
 - Toggle bật/tắt âm thanh
 - Lưu tự động vào database
+
+### Tự Động Phát Nhạc 🆕
+- Toggle bật/tắt tự động phát nhạc khi vào dashboard
+- Mặc định: BẬT
+- Khi vào dashboard, nhạc từ file `audio/play-music.mp3` sẽ tự động phát
+- Cần bật "Bật Âm Thanh" để tự động phát nhạc hoạt động
+- Âm lượng phát nhạc theo slider "Âm Thanh"
+
+### Đăng Xuất
+- Nút đăng xuất nằm trong modal cài đặt
+- Xóa token và dữ liệu session
+- Chuyển hướng về trang login
 
 ### Thống Kê
 - Số trận thắng
@@ -217,6 +287,14 @@ Server sẽ chạy trên `http://localhost:3000`
 - Rank người chơi
 
 ## 🔧 Troubleshooting
+
+### Lỗi "Unknown column 'p.brightness' in 'field list'" 🆕
+**Nguyên nhân:** Các cột `brightness`, `volume`, `sound_enabled`, `auto_play` chưa được thêm vào database.
+
+**Giải pháp:**
+Chạy database migration theo hướng dẫn ở mục **3.1 Chạy Database Migration** trên.
+
+Sau khi chạy migration, restart backend và tất cả sẽ hoạt động bình thường.
 
 ### Lỗi CORS
 Nếu gặp lỗi CORS, kiểm tra:
@@ -244,6 +322,28 @@ sudo systemctl start mysql
 - Xóa localStorage: `localStorage.clear()`
 - Đăng nhập lại
 - Kiểm tra `JWT_SECRET` giống nhau ở backend
+
+### Thêm Cột auto_play vào Database 🆕
+Nếu bạn cập nhật từ phiên bản cũ, cần thêm cột `auto_play` vào bảng `user_profiles`:
+
+**Cách 1: Sử dụng MySQL Workbench hoặc phpMyAdmin**
+```sql
+ALTER TABLE user_profiles ADD COLUMN auto_play BOOLEAN DEFAULT TRUE;
+```
+
+**Cách 2: Sử dụng MySQL command line**
+```bash
+mysql -u root -p xiangqi_db
+```
+Sau đó chạy:
+```sql
+ALTER TABLE user_profiles ADD COLUMN auto_play BOOLEAN DEFAULT TRUE;
+```
+
+**Cách 3: Kiểm tra cột đã tồn tại**
+```sql
+SHOW COLUMNS FROM user_profiles LIKE 'auto_play';
+```
 
 ### Lỗi Port 3000 đang sử dụng
 ```bash

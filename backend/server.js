@@ -4,17 +4,43 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import { Server } from "socket.io";
 
 dotenv.config();
 
 import { initializeDatabase } from "./database.js";
 import { router as authRouter } from "./auth.js";
+import {
+  addWaitingPlayer,
+  removeWaitingPlayer,
+  findMatch,
+  createRoom,
+  getRoomById,
+  getUserRoom,
+  updateRoomStatus,
+  startMatch,
+  saveMove,
+  endMatch,
+  saveChatMessage,
+  kickPlayerFromRoom,
+  closeRoom,
+  getWaitingPlayersCount,
+  getRoomInfo,
+  getRoomByCode,
+} from "./game-service.js";
+import { getConnection } from "./database.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  },
+});
 
 // Middleware
 app.use(
@@ -24,6 +50,9 @@ app.use(
   }),
 );
 app.use(express.json());
+app.use("/assets", express.static(path.join(__dirname, "../assets")));
+app.use("/audio", express.static(path.join(__dirname, "../audio")));
+app.use("/frontend", express.static(path.join(__dirname, "../frontend")));
 app.use(express.static(path.join(__dirname, "../frontend")));
 
 // Routes
@@ -47,6 +76,384 @@ app.get("/game", (req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/game.html"));
 });
 
+// ==================== SOCKET.IO EVENTS ====================
+
+io.on("connection", (socket) => {
+  console.log(`📱 Client connected: ${socket.id}`);
+
+  /**
+   * Join waiting queue for finding opponent
+   */
+  socket.on("joinQueue", async (data) => {
+    try {
+      const { userId, username, avatarUrl } = data;
+
+      if (!userId) {
+        socket.emit("error", { message: "User ID is required" });
+        return;
+      }
+
+      // Add to waiting queue
+      await addWaitingPlayer(userId, {
+        username,
+        avatar_url: avatarUrl,
+      });
+
+      // Store userId in socket for later reference
+      socket.data.userId = userId;
+      socket.data.username = username;
+
+      // Broadcast waiting players count
+      io.emit("waitingPlayersUpdate", { count: getWaitingPlayersCount() });
+
+      // Try to find opponent
+      const opponent = findMatch(userId);
+
+      if (opponent) {
+        console.log(`🎯 Match found! ${userId} vs ${opponent.userId}`);
+
+        // Get user info for room creation
+        const connection = await getConnection();
+        const [user1Data] = await connection.execute(
+          `SELECT u.username, u.email, p.full_name, p.avatar_url 
+           FROM users u 
+           LEFT JOIN user_profiles p ON u.user_id = p.user_id
+           WHERE u.user_id = ?`,
+          [userId],
+        );
+
+        const [user2Data] = await connection.execute(
+          `SELECT u.username, u.email, p.full_name, p.avatar_url 
+           FROM users u 
+           LEFT JOIN user_profiles p ON u.user_id = p.user_id
+           WHERE u.user_id = ?`,
+          [opponent.userId],
+        );
+
+        await connection.release();
+
+        const room = await createRoom(
+          userId,
+          user1Data[0],
+          opponent.userId,
+          user2Data[0],
+        );
+
+        // Notify both players
+        io.emit("matchFound", {
+          roomId: room.roomId,
+          roomCode: room.roomCode,
+          player1: room.player1,
+          player2: room.player2,
+          redPlayerId: room.redPlayerId,
+          blackPlayerId: room.blackPlayerId,
+          player1Id: userId,
+          player2Id: opponent.userId,
+        });
+
+        // Update waiting players count
+        io.emit("waitingPlayersUpdate", { count: getWaitingPlayersCount() });
+      } else {
+        socket.emit("waitingForOpponent", {
+          message: "Waiting for opponent...",
+          waitingTime: 0,
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error in joinQueue:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Join game room by code (rejoin after game ends)
+   */
+  socket.on("joinRoomByCode", async (data) => {
+    try {
+      const { userId, roomCode } = data;
+
+      if (!userId || !roomCode) {
+        socket.emit("error", { message: "User ID and Room Code required" });
+        return;
+      }
+
+      const room = await getRoomByCode(roomCode);
+
+      if (!room) {
+        socket.emit("error", { message: "Room not found" });
+        return;
+      }
+
+      // Only host can join back, and only if game ended
+      if (room.host_user_id !== userId && room.status !== "ended") {
+        socket.emit("error", {
+          message: "Only host can join this room after game ends",
+        });
+        return;
+      }
+
+      socket.data.userId = userId;
+      socket.data.roomId = room.room_id;
+
+      socket.emit("roomJoined", {
+        roomId: room.room_id,
+        roomCode: room.room_code,
+        hostUserId: room.host_user_id,
+        guestUserId: room.guest_user_id,
+        status: room.status,
+      });
+    } catch (error) {
+      console.error("❌ Error in joinRoomByCode:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Both players confirm starting new match
+   */
+  socket.on("confirmNewMatch", async (data) => {
+    try {
+      const { roomId, userId, confirmed } = data;
+
+      const room = getRoomById(roomId);
+      if (!room) {
+        socket.emit("error", { message: "Room not found" });
+        return;
+      }
+
+      if (!confirmed) {
+        // Player declined - kick guest and close room
+        if (room.guestUserId === userId) {
+          kickPlayerFromRoom(room.guestUserId);
+          io.emit("playerKicked", {
+            userId: room.guestUserId,
+            reason: "Host declined new match",
+          });
+        } else {
+          io.emit("matchDeclined", { roomId });
+        }
+        return;
+      }
+
+      // Both confirmed - start new match
+      await updateRoomStatus(roomId, "playing");
+      const matchInfo = await startMatch(roomId);
+
+      io.emit("newMatchStarted", {
+        roomId,
+        matchId: matchInfo.matchId,
+        redPlayerId: room.redPlayerId,
+        blackPlayerId: room.blackPlayerId,
+      });
+    } catch (error) {
+      console.error("❌ Error in confirmNewMatch:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Join game room (from matchFound)
+   */
+  socket.on("joinGame", async (data) => {
+    try {
+      const { userId, roomId } = data;
+
+      if (!userId || !roomId) {
+        socket.emit("error", { message: "User ID and Room ID required" });
+        return;
+      }
+
+      const room = getRoomById(roomId);
+      if (!room) {
+        socket.emit("error", { message: "Room not found" });
+        return;
+      }
+
+      socket.data.userId = userId;
+      socket.data.roomId = roomId;
+
+      socket.emit("gameReady", {
+        roomId,
+        roomCode: room.roomCode,
+        myRole: userId === room.redPlayerId ? "red" : "black",
+        redPlayerName:
+          room.player1.role === "red"
+            ? room.player1.username
+            : room.player2.username,
+        blackPlayerName:
+          room.player1.role === "black"
+            ? room.player1.username
+            : room.player2.username,
+        redPlayerId: room.redPlayerId,
+        blackPlayerId: room.blackPlayerId,
+        roomId: roomId,
+      });
+
+      // Start the match after both players join
+      const matchInfo = await startMatch(roomId);
+      io.emit("gameStarted", {
+        roomId,
+        matchId: matchInfo.matchId,
+        redPlayerId: room.redPlayerId,
+        blackPlayerId: room.blackPlayerId,
+      });
+    } catch (error) {
+      console.error("❌ Error in joinGame:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Handle move
+   */
+  socket.on("makeMove", async (data) => {
+    try {
+      const { matchId, playerId, fromPos, toPos, turnNumber } = data;
+
+      await saveMove(matchId, playerId, turnNumber, fromPos, toPos);
+
+      // Broadcast move to all players in room
+      const room = getRoomById(socket.data.roomId);
+      if (room) {
+        io.emit("moveMade", {
+          roomId: socket.data.roomId,
+          playerId,
+          fromPos,
+          toPos,
+          turnNumber,
+          timestamp: new Date(),
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error in makeMove:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Handle chat message
+   */
+  socket.on("sendMessage", async (data) => {
+    try {
+      const { roomId, messageText } = data;
+      const userId = socket.data.userId;
+
+      if (!userId || !roomId) {
+        socket.emit("error", { message: "Missing required fields" });
+        return;
+      }
+
+      await saveChatMessage(roomId, userId, messageText);
+
+      // Broadcast to room
+      io.emit("newMessage", {
+        roomId,
+        senderId: userId,
+        senderName: socket.data.username,
+        messageText,
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      console.error("❌ Error in sendMessage:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * End match
+   */
+  socket.on("endMatch", async (data) => {
+    try {
+      const { matchId, winnerId, result } = data;
+
+      await endMatch(matchId, winnerId, result);
+
+      const room = getRoomById(socket.data.roomId);
+      if (room) {
+        await updateRoomStatus(socket.data.roomId, "ended");
+
+        io.emit("matchEnded", {
+          roomId: socket.data.roomId,
+          matchId,
+          winnerId,
+          result,
+          hostUserId: room.hostUserId,
+          guestUserId: room.guestUserId,
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error in endMatch:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Resign match
+   */
+  socket.on("resign", async (data) => {
+    try {
+      const { matchId, playerId } = data;
+      const room = getRoomById(socket.data.roomId);
+
+      if (room) {
+        const winnerId =
+          room.redPlayerId === playerId ? room.blackPlayerId : room.redPlayerId;
+        await endMatch(matchId, winnerId, "resign");
+        await updateRoomStatus(socket.data.roomId, "ended");
+
+        io.emit("matchEnded", {
+          roomId: socket.data.roomId,
+          matchId,
+          winnerId,
+          result: "resign",
+          hostUserId: room.hostUserId,
+          guestUserId: room.guestUserId,
+        });
+      }
+    } catch (error) {
+      console.error("❌ Error in resign:", error);
+      socket.emit("error", { message: error.message });
+    }
+  });
+
+  /**
+   * Player leaves room
+   */
+  socket.on("leaveRoom", async (data) => {
+    try {
+      const { roomId } = data;
+      const userId = socket.data.userId;
+      const room = getRoomById(roomId);
+
+      if (room) {
+        if (room.hostUserId === userId) {
+          // Host left - keep room open for guest to rejoin
+          io.emit("hostLeft", { roomId });
+        } else if (room.guestUserId === userId) {
+          // Guest left - close room and notify host
+          kickPlayerFromRoom(userId);
+          io.emit("guestLeft", { roomId });
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error in leaveRoom:", error);
+    }
+  });
+
+  /**
+   * Disconnect handler
+   */
+  socket.on("disconnect", () => {
+    console.log(`📴 Client disconnected: ${socket.id}`);
+
+    const userId = socket.data.userId;
+    if (userId) {
+      removeWaitingPlayer(userId);
+      io.emit("waitingPlayersUpdate", { count: getWaitingPlayersCount() });
+    }
+  });
+});
+
 // Error handling
 app.use((err, req, res, next) => {
   console.error("Error:", err);
@@ -68,6 +475,7 @@ async function startServer() {
 ║      🏮 Cờ Tướng Server Started 🏮     ║
 ╠════════════════════════════════════════╣
 ║  Server: http://localhost:${PORT}       ║
+║  WebSocket: ws://localhost:${PORT}      ║
 ║  Environment: ${process.env.NODE_ENV || "development"}  ║
 ╚════════════════════════════════════════╝
       `);

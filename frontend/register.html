@@ -278,7 +278,7 @@
               >
               <div class="relative">
                 <input
-                  class="w-full input-glass border-0 border-b-2 border-outline/30 focus:border-tertiary focus:ring-0 text-on-surface placeholder:text-outline/50 transition-all duration-300 py-3 px-1"
+                  class="w-full input-glass border-0 border-b-2 border-outline/30 focus:border-tertiary focus:ring-0 text-on-surface placeholder:text-outline/50 transition-all duration-300 py-3 px-1 pr-10"
                   id="password"
                   name="password"
                   placeholder="••••••••"
@@ -286,10 +286,14 @@
                   minlength="6"
                   required
                 />
-                <span
-                  class="material-symbols-outlined absolute right-2 top-3 text-outline/40 text-sm"
-                  >lock</span
+                <button
+                  id="togglePassword"
+                  class="material-symbols-outlined absolute right-2 top-3 text-outline/40 hover:text-outline/80 transition-colors text-sm cursor-pointer"
+                  type="button"
+                  title="Hiển thị/Ẩn mật khẩu"
                 >
+                  visibility
+                </button>
               </div>
             </div>
             <!-- Confirm Password -->
@@ -301,17 +305,21 @@
               >
               <div class="relative">
                 <input
-                  class="w-full input-glass border-0 border-b-2 border-outline/30 focus:border-tertiary focus:ring-0 text-on-surface placeholder:text-outline/50 transition-all duration-300 py-3 px-1"
+                  class="w-full input-glass border-0 border-b-2 border-outline/30 focus:border-tertiary focus:ring-0 text-on-surface placeholder:text-outline/50 transition-all duration-300 py-3 px-1 pr-10"
                   id="confirm_password"
                   name="confirm_password"
                   placeholder="••••••••"
                   type="password"
                   required
                 />
-                <span
-                  class="material-symbols-outlined absolute right-2 top-3 text-outline/40 text-sm"
-                  >verified_user</span
+                <button
+                  id="toggleConfirmPassword"
+                  class="material-symbols-outlined absolute right-2 top-3 text-outline/40 hover:text-outline/80 transition-colors text-sm cursor-pointer"
+                  type="button"
+                  title="Hiển thị/Ẩn mật khẩu"
                 >
+                  visibility
+                </button>
               </div>
             </div>
             <!-- Error Message -->
@@ -508,6 +516,45 @@
             registerBtn.disabled = false;
             registerBtnText.innerHTML =
               'Đăng Ký <span class="material-symbols-outlined text-sm">arrow_forward</span>';
+          }
+        });
+
+      // Toggle Password Visibility
+      document
+        .getElementById("togglePassword")
+        .addEventListener("click", (e) => {
+          e.preventDefault();
+          const passwordInput = document.getElementById("password");
+          const toggleBtn = document.getElementById("togglePassword");
+
+          if (passwordInput.type === "password") {
+            passwordInput.type = "text";
+            toggleBtn.textContent = "visibility_off";
+            toggleBtn.title = "Ẩn mật khẩu";
+          } else {
+            passwordInput.type = "password";
+            toggleBtn.textContent = "visibility";
+            toggleBtn.title = "Hiển thị mật khẩu";
+          }
+        });
+
+      // Toggle Confirm Password Visibility
+      document
+        .getElementById("toggleConfirmPassword")
+        .addEventListener("click", (e) => {
+          e.preventDefault();
+          const confirmPasswordInput =
+            document.getElementById("confirm_password");
+          const toggleBtn = document.getElementById("toggleConfirmPassword");
+
+          if (confirmPasswordInput.type === "password") {
+            confirmPasswordInput.type = "text";
+            toggleBtn.textContent = "visibility_off";
+            toggleBtn.title = "Ẩn mật khẩu";
+          } else {
+            confirmPasswordInput.type = "password";
+            toggleBtn.textContent = "visibility";
+            toggleBtn.title = "Hiển thị mật khẩu";
           }
         });
     </script>

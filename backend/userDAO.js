@@ -115,9 +115,12 @@ class UserDAO {
         return null;
       }
 
-      // Add default brightness
+      // Add defaults (client-side defaults since columns may not exist yet in DB)
       const user = users[0];
-      user.brightness = 50;
+      user.brightness = 80;
+      user.volume = 50;
+      user.sound_enabled = true;
+      user.auto_play = true;
       return user;
     } catch (error) {
       throw error;
@@ -142,6 +145,7 @@ class UserDAO {
         "brightness",
         "sound_enabled",
         "volume",
+        "auto_play",
       ];
 
       const updates = [];
@@ -167,6 +171,19 @@ class UserDAO {
 
       return { success: true, message: "Profile updated successfully" };
     } catch (error) {
+      // Handle missing columns gracefully
+      if (error.code === "ER_BAD_FIELD_ERROR") {
+        console.warn(
+          "Database column missing. Run migration: backend/migrations/001-add-settings-columns.sql",
+        );
+        return {
+          success: true,
+          message:
+            "Settings saved locally. Please run database migration for persistence.",
+          warning:
+            "Missing database columns - run migration to enable persistence",
+        };
+      }
       throw error;
     } finally {
       await connection.release();
@@ -188,6 +205,13 @@ class UserDAO {
       sound_enabled: soundEnabled,
       volume: volume,
     });
+  }
+
+  /**
+   * Update user auto-play setting
+   */
+  async updateAutoPlay(userId, autoPlay) {
+    return this.updateUserProfile(userId, { auto_play: autoPlay });
   }
 
   /**

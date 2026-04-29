@@ -241,6 +241,33 @@ router.put("/sound", verifyToken, async (req, res) => {
 });
 
 /**
+ * PUT /auth/auto-play
+ * Update auto-play setting
+ */
+router.put("/auto-play", verifyToken, async (req, res) => {
+  try {
+    const { autoPlay } = req.body;
+
+    if (autoPlay === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "autoPlay must be provided",
+      });
+    }
+
+    const result = await userDAO.updateAutoPlay(req.userId, autoPlay);
+
+    res.status(200).json(result);
+  } catch (error) {
+    console.error("Update auto-play error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+/**
  * GET /auth/leaderboard
  * Get leaderboard
  */
