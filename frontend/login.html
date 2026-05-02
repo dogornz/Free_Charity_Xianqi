@@ -241,8 +241,7 @@
                 <input
                   id="password"
                   name="password"
-                  class="input-glass w-full px-4 py-4 pr-12 rounded-lg border-b-2 border-outline/30 border-t-transparent border-x-transparent 
-                  focus:border-tertiary focus:ring-0 focus:outline-none transition-all duration-300 text-on-surface placeholder:text-on-surface-variant/40"
+                  class="input-glass w-full px-4 py-4 pr-12 rounded-lg border-b-2 border-outline/30 border-t-transparent border-x-transparent focus:border-tertiary focus:ring-0 focus:outline-none transition-all duration-300 text-on-surface placeholder:text-on-surface-variant/40"
                   placeholder="••••••••"
                   type="password"
                   required
@@ -409,9 +408,12 @@
               throw new Error(data.message || "Đăng nhập thất bại");
             }
 
-            // Save token to localStorage
+            // Save user data in both sessionStorage and localStorage for page compatibility
+            sessionStorage.setItem("currentUser", JSON.stringify(data.user));
+            sessionStorage.setItem("token", data.token);
+            localStorage.setItem("userData", JSON.stringify(data.user));
             localStorage.setItem("token", data.token);
-            localStorage.setItem("user", JSON.stringify(data.user));
+            localStorage.removeItem("user");
 
             successMessage.textContent =
               "Đăng nhập thành công! Đang chuyển hướng...";

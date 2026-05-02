@@ -6,11 +6,14 @@ let currentUser = null;
  * Initialize dashboard
  */
 document.addEventListener("DOMContentLoaded", async () => {
-  // Load user from localStorage
+  // Load user from sessionStorage first, then fallback to localStorage
   const userDataStr =
-    localStorage.getItem("userData") || localStorage.getItem("user");
+    sessionStorage.getItem("currentUser") ||
+    localStorage.getItem("userData") ||
+    localStorage.getItem("user");
 
-  const token = localStorage.getItem("token");
+  const token =
+    sessionStorage.getItem("token") || localStorage.getItem("token");
 
   if (!userDataStr) {
     // Redirect to login if not authenticated
@@ -20,6 +23,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   try {
     currentUser = JSON.parse(userDataStr);
+    currentUser.userId = currentUser.userId || currentUser.user_id;
+    currentUser.user_id = currentUser.user_id || currentUser.userId;
     updateDashboardUI(currentUser);
     initializeDashboardSocket(currentUser);
     setupDashboardEventListeners();
@@ -78,6 +83,17 @@ function setupDashboardSocket(user) {
 
   socket.on("matchFound", (data) => {
     console.log("🎯 Match found!", data);
+
+    // Preserve match data so the game page can restore the room state.
+    sessionStorage.setItem("inGame", "true");
+    sessionStorage.setItem("roomId", data.roomId);
+    sessionStorage.setItem("roomCode", data.roomCode);
+    sessionStorage.setItem("myRole", data.player1.role);
+    sessionStorage.setItem("redPlayerId", data.redPlayerId);
+    sessionStorage.setItem("blackPlayerId", data.blackPlayerId);
+    sessionStorage.setItem("opponentName", data.player2?.username || "");
+    sessionStorage.setItem("opponentAvatar", data.player2?.avatar || "");
+
     showMatchFoundNotification(data);
   });
 

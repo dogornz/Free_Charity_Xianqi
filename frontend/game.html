@@ -219,14 +219,6 @@
             <h4>Chat</h4>
           </div>
           <div class="messages" id="chat-messages">
-            <div class="message opponent-message">
-              <span class="message-sender">Đối Thủ:</span>
-              <span class="message-text">Chào bạn!</span>
-            </div>
-            <div class="message player-message">
-              <span class="message-sender">Bạn:</span>
-              <span class="message-text">Chào! Hãy chơi thôi!</span>
-            </div>
           </div>
           <div class="chat-input">
             <input type="text" id="chat-input" placeholder="Gửi tin nhắn..." />
@@ -296,8 +288,35 @@
     </div>
 
     <!-- Socket.io Client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="game-client.js"></script>
     <!-- Main Game Logic -->
-    <script src="game.js"></script>
+    <script src="game-ref.js"></script>
+    <script>
+      (function () {
+        // Lấy user từ sessionStorage (đã lưu khi matchFound)
+        const userStr = sessionStorage.getItem("currentUser");
+        if (!userStr) {
+          console.error("❌ No user info. Redirect to dashboard.");
+        }
+        const user = JSON.parse(userStr);
+        const roomId = sessionStorage.getItem("roomId");
+        if (!roomId) {
+          console.error("❌ No roomId. Redirect to dashboard.");
+          window.location.href = "/dashboard";
+          return;
+        }
+        // Gọi hàm khởi tạo socket nếu chưa có kết nối tồn tại
+        if (typeof initializeSocket === "function") {
+          if (typeof socket === "undefined" || !socket || socket.disconnected) {
+            initializeSocket(user.userId, user);
+          }
+        } else {
+          console.error(
+            "❌ initializeSocket not found. Check order of scripts.",
+          );
+        }
+      })();
+    </script>
   </body>
 </html>

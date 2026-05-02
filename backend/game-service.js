@@ -224,9 +224,9 @@ async function startMatch(roomId) {
 
     // Insert into matches table
     const [matchResult] = await connection.execute(
-      `INSERT INTO matches (room_id, red_player_id, black_player_id, start_time)
-       VALUES (?, ?, ?, ?)`,
-      [roomId, room.redPlayerId, room.blackPlayerId, now],
+      `INSERT INTO matches (room_id, red_player_id, black_player_id, start_time, turn_number)
+       VALUES (?, ?, ?, ?, ?)`,
+      [roomId, room.redPlayerId, room.blackPlayerId, now, 1],
     );
 
     const matchId = matchResult.insertId;
@@ -238,7 +238,7 @@ async function startMatch(roomId) {
 
     await connection.execute(
       `UPDATE rooms SET match_id = ?, status = ?, updated_at = ? WHERE room_id = ?`,
-      ["playing", matchId, now, roomId],
+      [matchId, "playing", now, roomId],
     );
 
     return { matchId, ...room };
@@ -249,7 +249,30 @@ async function startMatch(roomId) {
     await connection.release();
   }
 }
-
+/**
+ * Get match by matchId
+ */
+export async function getMatch(matchId) {
+  const connection = await getConnection();
+  const [rows] = await connection.execute(
+    "SELECT * FROM matches WHERE match_id = ?",
+    [matchId]
+  );
+  connection.release();
+  return rows[0];
+}
+/**
+ * 
+ * Hàm tăng turn
+ */
+export async function incrementTurn(matchId) {
+  const connection = await getConnection();
+  await connection.execute(
+    "UPDATE matches SET turn_number = turn_number + 1 WHERE match_id = ?",
+    [matchId]
+  );
+  connection.release();
+}
 /**
  * Save move
  */
@@ -327,7 +350,7 @@ async function saveChatMessage(roomId, senderId, messageText) {
   const connection = await getConnection();
   try {
     const [messageResult] = await connection.execute(
-      `INSERT INTO messages (room_id, sender_id, message_text, sent_at)
+      `INSERT INTO chat_messages (room_id, sender_id, message_text, sent_at)
        VALUES (?, ?, ?, ?)`,
       [roomId, senderId, messageText, new Date()],
     );

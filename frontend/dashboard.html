@@ -758,7 +758,8 @@
       // Check authentication on page load
       document.addEventListener("DOMContentLoaded", async () => {
         const token = localStorage.getItem("token");
-        const user = JSON.parse(localStorage.getItem("user") || "{}");
+        const user = JSON.parse(sessionStorage.getItem("currentUser"));
+        if (!user) window.location.href = "/";
 
         if (!token) {
           window.location.href = "login.html";
@@ -982,8 +983,40 @@
         );
         document.body.style.filter = `brightness(${brightnessValue})`;
       }
+      function logout() {
+        sessionStorage.removeItem("currentUser");
+        sessionStorage.removeItem("token");
+        localStorage.removeItem("user"); // xóa nốt localStorage cũ
+        localStorage.removeItem("token");
+        window.location.href = "/";
+      }
     </script>
     <!-- Dashboard Socket.io Integration -->
     <script src="dashboard.js"></script>
+
+    <script>
+      // Đợi DOM tải xong
+      document.addEventListener("DOMContentLoaded", function () {
+        const userStr = sessionStorage.getItem("currentUser");
+        if (!userStr) {
+          console.warn("No user found, redirect to login");
+          window.location.href = "/";
+          return;
+        }
+        const user = JSON.parse(userStr);
+        user.userId = user.userId || user.user_id;
+        user.user_id = user.user_id || user.userId;
+        console.log("Dashboard: user loaded", user.userId);
+
+        // Gọi hàm khởi tạo socket (từ game-client.js)
+        if (typeof initializeSocket === "function") {
+          initializeSocket(user.userId, user);
+        } else {
+          console.error(
+            "initializeSocket not defined – make sure game-client.js is loaded",
+          );
+        }
+      });
+    </script>
   </body>
 </html>

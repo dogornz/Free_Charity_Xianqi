@@ -1191,9 +1191,11 @@ function movePiece(fromRow, fromCol, toRow, toCol) {
 
   // Add move to history
   const captureInfo = capturedPieceKey ? " x" : "";
-  const moveNotation = `${pieceObj.type}${captureInfo}: ${fromRow},${fromCol} → ${toRow},${toCol}`;
+  const moveNotation = String(
+    `${pieceObj.type}${captureInfo}: ${fromRow},${fromCol} → ${toRow},${toCol}`,
+  );
   addMoveToHistory(moveNotation);
-
+  console.log(pieceObj);
   // Send move via Socket.io
   if (
     socket &&
@@ -1370,7 +1372,9 @@ function addMoveToHistory(moveText) {
   const movesList = document.getElementById("moves-list");
   const moveItem = document.createElement("div");
   moveItem.className = "move-item";
-  moveItem.textContent = `${gameState.moveHistory.length}. ${moveText}`;
+  moveItem.textContent = `${gameState.moveHistory.length}. ${
+    typeof moveText === "string" ? moveText : JSON.stringify(moveText)
+  }`;
   movesList.appendChild(moveItem);
 
   // Auto-scroll to bottom
@@ -1645,7 +1649,7 @@ function sendMessage() {
   // Display on own UI
   const messageDiv = document.createElement("div");
   messageDiv.className = `message player-message ${currentDeviceType}`;
-  messageDiv.innerHTML = `<span class="message-sender">Bạn:</span><span class="message-text">${escapeHtml(messageText)}</span>`;
+  messageDiv.innerHTML = `<span class="message-sender"></span><span class="message-text">${escapeHtml(messageText)}</span>`;
 
   messagesContainer.appendChild(messageDiv);
   messagesContainer.scrollTop = messagesContainer.scrollHeight;

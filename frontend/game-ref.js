@@ -53,16 +53,54 @@ function getAssetFolder() {
 
 // Initialize Game
 document.addEventListener("DOMContentLoaded", () => {
-  // Try to load current user from localStorage
-  const userDataStr = localStorage.getItem("userData");
+  // Try to load current user from sessionStorage first, then fallback to localStorage
+  const userDataStr =
+    sessionStorage.getItem("currentUser") ||
+    localStorage.getItem("userData") ||
+    localStorage.getItem("user");
   if (userDataStr) {
     try {
       currentUser = JSON.parse(userDataStr);
+      currentUser.userId = currentUser.userId || currentUser.user_id;
+      currentUser.user_id = currentUser.user_id || currentUser.userId;
       // Initialize Socket.io with user data
-      initializeSocket(currentUser.user_id, {
+      initializeSocket(currentUser.userId, {
         username: currentUser.username,
         avatar_url: currentUser.avatar_url,
       });
+
+      // Restore gameState from sessionStorage if coming from matchFound
+      const inGame = sessionStorage.getItem("inGame");
+      if (inGame === "true") {
+        const roomIdRaw = sessionStorage.getItem("roomId");
+        const roomId = roomIdRaw ? parseInt(roomIdRaw, 10) : null;
+        const myRole = sessionStorage.getItem("myRole");
+        const redPlayerIdRaw = sessionStorage.getItem("redPlayerId");
+        const blackPlayerIdRaw = sessionStorage.getItem("blackPlayerId");
+        const redPlayerId = redPlayerIdRaw
+          ? parseInt(redPlayerIdRaw, 10)
+          : null;
+        const blackPlayerId = blackPlayerIdRaw
+          ? parseInt(blackPlayerIdRaw, 10)
+          : null;
+        const opponentName = sessionStorage.getItem("opponentName");
+        const opponentAvatar = sessionStorage.getItem("opponentAvatar");
+
+        if (roomId && myRole) {
+          console.log("🎮 Restoring game state from matchFound...");
+          gameState.roomId = roomId;
+          gameState.userRole = myRole;
+          gameState.redPlayerId = redPlayerId;
+          gameState.blackPlayerId = blackPlayerId;
+          currentRoom = {
+            roomId,
+            opponentName,
+            opponentAvatar,
+            myName: currentUser.username,
+            myAvatar: currentUser.avatar_url,
+          };
+        }
+      }
 
       // Check if there's a roomCode in URL (user is rejoining)
       const roomCode = getRoomCodeFromURL();
@@ -72,9 +110,6 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => {
           joinRoomByCode(roomCode);
         }, 1000);
-      } else {
-        // Auto join queue if not rejoining
-        console.log("✨ Starting new match session");
       }
     } catch (error) {
       console.error("❌ Error parsing user data:", error);
@@ -201,6 +236,10 @@ function initializeGame() {
   }
 
   renderPieces();
+
+  // Apply board orientation based on current role
+  applyBoardOrientation();
+
   startGameTimer();
   updateKingPositions();
 
@@ -343,6 +382,8 @@ function renderPieces() {
       squareElement.appendChild(pieceElement);
     }
   }
+
+  applyBoardOrientation();
 }
 
 /**
@@ -351,6 +392,10 @@ function renderPieces() {
 function createOptimizedPieceElement(pieceKey, piece, assetFolder) {
   const pieceElement = document.createElement("div");
   pieceElement.className = `piece-on-board ${piece.color} ${currentDeviceType}`;
+
+  const rotate = gameState.userRole === "black";
+
+  pieceElement.style.transform = rotate ? "rotate(180deg)" : "none";
 
   const pieceImageName = `${piece.type}_${piece.color}.png`;
   const imageUrl = `../assets/${assetFolder}/${pieceImageName}?v=${ASSET_VERSION}`;
@@ -417,7 +462,20 @@ function setupMobileOptimizations() {
  * Handle square click - MOBILE OPTIMIZED
  */
 function handleSquareClick(row, col) {
+  console.log("ROLE:", gameState.userRole);
+  console.log("TURN:", gameState.currentPlayer);
   if (gameState.gameStatus !== "playing" && gameState.gameStatus !== "check") {
+    return;
+  }
+
+  // Check if it's player's turn
+  if (
+    gameState.userRole &&
+    gameState.currentPlayer &&
+    gameState.userRole !== gameState.currentPlayer
+  ) {
+    console.log("⏳ Not your turn!");
+    showNotYourTurnMessage();
     return;
   }
 
@@ -436,6 +494,17 @@ function handleSquareClick(row, col) {
  * Select a piece
  */
 function selectPiece(pieceKey) {
+  // Check if it's player's turn - prevent selecting when not our turn
+  if (
+    gameState.userRole &&
+    gameState.currentPlayer &&
+    gameState.userRole !== gameState.currentPlayer
+  ) {
+    console.log("⏳ Not your turn!");
+    showNotYourTurnMessage();
+    return;
+  }
+
   const piece = gameState.pieces[pieceKey];
 
   // Check if this is the target square for a move (capturing opponent piece)
@@ -1256,6 +1325,92 @@ function movePiece(fromRow, fromCol, toRow, toCol) {
   showLastMoveMarkers();
 }
 
+/**
+ * Apply remote move from opponent (without sending back via socket)
+ */
+function applyRemoteMove(fromRow, fromCol, toRow, toCol) {
+  // Find the piece
+  const piece = Object.entries(gameState.pieces).find(
+    ([key, p]) => p.row === fromRow && p.col === fromCol,
+  );
+
+  if (!piece) {
+    console.error(
+      `❌ No piece found at position ${fromRow},${fromCol} to apply remote move`,
+    );
+    return;
+  }
+
+  const [pieceKey, pieceObj] = piece;
+
+  // Check for capture
+  const capturedPieceKey = Object.entries(gameState.pieces).find(
+    ([key, p]) => p.row === toRow && p.col === toCol,
+  )?.[0];
+
+  // Move piece
+  pieceObj.row = toRow;
+  pieceObj.col = toCol;
+
+  // Update king positions if king moved
+  if (pieceObj.type === "king") {
+    updateKingPositions();
+  }
+
+  // Remove captured piece
+  if (capturedPieceKey) {
+    delete gameState.pieces[capturedPieceKey];
+  }
+
+  // Add move to history
+  const captureInfo = capturedPieceKey ? " x" : "";
+  const moveNotation = `${pieceObj.type}${captureInfo}: ${fromRow},${fromCol} → ${toRow},${toCol}`;
+  addMoveToHistory(moveNotation);
+
+  // Save last move
+  gameState.lastMove = { fromRow, fromCol, toRow, toCol };
+
+  // Re-render board
+  updatePiecePosition(pieceKey, fromRow, fromCol, toRow, toCol);
+  clearSelection();
+  showLastMoveMarkers();
+
+  // Check game status after opponent move
+  if (isInCheckmate()) {
+    gameState.gameStatus = "checkmate";
+    const loserSide = gameState.currentPlayer === "red" ? "Đỏ" : "Đen";
+    showGameResult(`${loserSide} chiếu hết! Game Over.`);
+
+    // End match via socket
+    if (socket && gameState.matchId) {
+      const winnerId =
+        gameState.currentPlayer === "red"
+          ? gameState.blackPlayerId
+          : gameState.redPlayerId;
+      endMatch(gameState.matchId, winnerId, "checkmate");
+    }
+  } else if (isInStalemate()) {
+    gameState.gameStatus = "stalemate";
+    showGameResult("Cờ bế tắc! Game Over.");
+
+    // End match via socket
+    if (socket && gameState.matchId) {
+      endMatch(gameState.matchId, null, "stalemate");
+    }
+  } else if (isInCheck()) {
+    gameState.gameStatus = "check";
+    showCheckAlert(
+      `${gameState.currentPlayer === "red" ? "Đỏ" : "Đen"} bị chiếu tướng!`,
+    );
+  } else {
+    gameState.gameStatus = "playing";
+  }
+
+  switchPlayer();
+
+  console.log("✅ Remote move applied successfully");
+}
+
 function updatePiecePosition(pieceKey, fromRow, fromCol, toRow, toCol) {
   const fromSquare = document.getElementById(`square-${fromRow}-${fromCol}`);
   const toSquare = document.getElementById(`square-${toRow}-${toCol}`);
@@ -1334,7 +1489,18 @@ function showCheckAlert(message) {
 }
 
 /**
+ * Show "not your turn" message to player
+ */
+function showNotYourTurnMessage() {
+  const opponentColor = gameState.currentPlayer === "red" ? "Đỏ" : "Đen";
+  showCheckAlert(`Chưa đến lượt bạn! ${opponentColor} đang chơi.`);
+}
+
+/**
  * Show game result (checkmate, stalemate)
+ */
+/**
+ * Show game result
  */
 function showGameResult(message) {
   const resultDiv = document.createElement("div");
@@ -1363,9 +1529,23 @@ function showGameResult(message) {
 }
 
 /**
+ * End game (called when game ends due to surrender, timeout, etc)
+ */
+function endGame(reason = "normal") {
+  console.log(`🏁 Game ended - Reason: ${reason}`);
+  gameState.gameStatus = "ended";
+  // Further logic can be added here as needed
+}
+
+/**
  * Add move to history
  */
 function addMoveToHistory(moveText) {
+   if (typeof moveText === "object") {
+    console.warn("⚠️ moveText là object:", moveText);
+    return; // ❌ không cho hiển thị
+  }
+
   gameState.moveHistory.push(moveText);
   const movesList = document.getElementById("moves-list");
   const moveItem = document.createElement("div");
@@ -1473,23 +1653,75 @@ function playBeepSound() {
 }
 
 /**
- * Start game timer
+ * Start game timer - 15 minutes (900 seconds) per player
  */
 function startGameTimer() {
-  let playerTime = 300; // 5 minutes in seconds
-  let opponentTime = 300;
+  let playerTime = 900; // 15 minutes in seconds
+  let opponentTime = 900;
+  let timerInterval = null;
 
-  setInterval(() => {
-    if (gameState.currentPlayer === "red") {
+  // Store references for pause/resume if needed
+  gameState.playerTime = playerTime;
+  gameState.opponentTime = opponentTime;
+
+  // Update display initially
+  document.getElementById("player-time").textContent = formatTime(playerTime);
+  document.getElementById("opponent-time").textContent =
+    formatTime(opponentTime);
+
+  timerInterval = setInterval(() => {
+    if (
+      gameState.gameStatus !== "playing" &&
+      gameState.gameStatus !== "check"
+    ) {
+      clearInterval(timerInterval);
+      return;
+    }
+
+    // Check whose turn it is - simple logic
+    const isPlayerTurn = gameState.userRole === gameState.currentPlayer;
+
+    if (isPlayerTurn) {
+      // Player's turn - decrement player time
       playerTime--;
+      gameState.playerTime = playerTime;
       document.getElementById("player-time").textContent =
         formatTime(playerTime);
+
+      // Check timeout
+      if (playerTime <= 0) {
+        clearInterval(timerInterval);
+        endGame("timeout");
+        showGameResult("Hết thời gian! Bạn thua.");
+        if (socket && gameState.matchId) {
+          // Get opponent ID
+          const opponentId =
+            gameState.userRole === "red"
+              ? gameState.blackPlayerId
+              : gameState.redPlayerId;
+          endMatch(gameState.matchId, opponentId, "timeout");
+        }
+      }
     } else {
+      // Opponent's turn - decrement opponent time
       opponentTime--;
+      gameState.opponentTime = opponentTime;
       document.getElementById("opponent-time").textContent =
         formatTime(opponentTime);
+
+      // Check timeout
+      if (opponentTime <= 0) {
+        clearInterval(timerInterval);
+        endGame("timeout");
+        showGameResult("Đối thủ hết thời gian! Bạn thắng.");
+        if (socket && gameState.matchId) {
+          endMatch(gameState.matchId, currentUser.userId, "timeout");
+        }
+      }
     }
   }, 1000);
+
+  gameState.timerInterval = timerInterval;
 }
 
 /**
@@ -1499,6 +1731,49 @@ function formatTime(seconds) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+/**
+ * Rotate board 180 degrees for black player (visual only, coordinates remain same)
+ * This only rotates the visual display without changing piece coordinates
+ */
+function rotateBoard() {
+  applyBoardOrientation();
+}
+
+/**
+ * Apply board orientation based on the current player role.
+ */
+function applyBoardOrientation() {
+  const boardElement = document.getElementById("chess-board");
+  const rotate = gameState.userRole === "black";
+
+  // For black player: rotate the board 180 degrees but keep pieces upright
+  // We need to counter-rotate the pieces so they display correctly
+  if (boardElement) {
+    boardElement.style.transform = rotate ? "rotate(180deg)" : "none";
+    boardElement.style.transition = "transform 0.3s ease-out";
+  }
+
+  // IMPORTANT: Counter-rotate pieces so they appear correct for black player
+  // When board rotates 180deg, pieces would appear upside down without this
+  document.querySelectorAll(".piece-on-board").forEach((piece) => {
+    // Counter-rotate 180deg to negate the board's 180deg rotation
+    piece.style.transform = rotate ? "rotate(180deg)" : "none";
+    piece.style.transition = "transform 0.3s ease-out";
+  });
+
+  // Note: We do NOT change piece coordinates (row, col)
+  // This way click handlers still work correctly with original coordinates
+  // The visual rotation is purely CSS-based
+
+  if (rotate) {
+    console.log(
+      "✅ Board rotated visually for black player (pieces counter-rotated)",
+    );
+  } else {
+    console.log("✅ Board oriented normally for red player");
+  }
 }
 
 /**
@@ -1634,21 +1909,16 @@ function sendMessage() {
 
   if (!messageText) return;
 
-  const messagesContainer = document.getElementById("chat-messages");
-  if (!messagesContainer) return;
-
   // Send via Socket.io
   if (socket && currentRoom && gameState.roomId) {
     sendChatMessage(messageText);
   }
 
-  // Display on own UI
-  const messageDiv = document.createElement("div");
-  messageDiv.className = `message player-message ${currentDeviceType}`;
-  messageDiv.innerHTML = `<span class="message-sender">Bạn:</span><span class="message-text">${escapeHtml(messageText)}</span>`;
+  // Display on own UI using addChatMessage for consistency
+  if (typeof addChatMessage === "function") {
+    addChatMessage("Bạn", messageText, true);
+  }
 
-  messagesContainer.appendChild(messageDiv);
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
   chatInput.value = "";
 }
 

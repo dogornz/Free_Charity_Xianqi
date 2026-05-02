@@ -5,7 +5,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { Server } from "socket.io";
-import { getMatch, incrementTurn } from "./game-service.js";
 
 dotenv.config();
 
@@ -30,18 +29,9 @@ import {
   getRoomByCode,
 } from "./game-service.js";
 import { getConnection } from "./database.js";
-import { create } from "domain";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const withTimeout = (promise, timeoutMs = 5000) => {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Operation timeout")), timeoutMs),
-    ),
-  ]);
-};
 
 const app = express();
 const server = http.createServer(app);
@@ -51,8 +41,6 @@ const io = new Server(server, {
     credentials: true,
   },
 });
-
-const disconnectTimers = new Map();
 
 // Middleware
 app.use(
@@ -92,14 +80,7 @@ app.get("/game", (req, res) => {
 
 io.on("connection", (socket) => {
   console.log(`📱 Client connected: ${socket.id}`);
-  const userId = socket.handshake.auth?.userId;
 
-  if (userId && disconnectTimers.has(userId)) {
-    clearTimeout(disconnectTimers.get(userId));
-    disconnectTimers.delete(userId);
-
-    console.log(`🔄 User ${userId} reconnected`);
-  }
   /**
    * Join waiting queue for finding opponent
    */
@@ -140,6 +121,7 @@ io.on("connection", (socket) => {
            WHERE u.user_id = ?`,
           [userId],
         );
+
         const [user2Data] = await connection.execute(
           `SELECT u.username, u.email, p.full_name, p.avatar_url 
            FROM users u 
@@ -149,7 +131,7 @@ io.on("connection", (socket) => {
         );
 
         await connection.release();
-        // Get user info for room creation
+
         const room = await createRoom(
           userId,
           user1Data[0],
@@ -157,18 +139,12 @@ io.on("connection", (socket) => {
           user2Data[0],
         );
 
-        // Broadcast waiting players count to everyone except the matched players
-        io.except(`room_${room.roomId}`).emit("waitingPlayersUpdate", {
-          count: getWaitingPlayersCount(),
-        });
-
         // Get sockets of both players and notify them directly
         const player1Socket = io.sockets.sockets.get(socket.id);
         const player2Sockets = Array.from(io.sockets.sockets.values()).filter(
           (s) => s.data.userId === opponent.userId,
         );
 
-        // Player 1 gets normal data - they are player1 in the room object
         if (player1Socket) {
           player1Socket.join(`room_${room.roomId}`);
           player1Socket.emit("matchFound", {
@@ -183,27 +159,25 @@ io.on("connection", (socket) => {
           });
         }
 
-        // Player 2 gets SWAPPED data - they are player2 in the room object
+        // Notify opponent if online
         for (const player2Socket of player2Sockets) {
           if (player2Socket) {
             player2Socket.join(`room_${room.roomId}`);
             player2Socket.emit("matchFound", {
               roomId: room.roomId,
               roomCode: room.roomCode,
-              player1: room.player2,
-              player2: room.player1,
+              player1: room.player1,
+              player2: room.player2,
               redPlayerId: room.redPlayerId,
               blackPlayerId: room.blackPlayerId,
-              player1Id: opponent.userId,
-              player2Id: userId,
+              player1Id: userId,
+              player2Id: opponent.userId,
             });
           }
         }
 
         // Update waiting players count
-        io.to(`room_${room.roomId}`).emit("waitingPlayersUpdate", {
-          count: getWaitingPlayersCount(),
-        });
+        io.emit("waitingPlayersUpdate", { count: getWaitingPlayersCount() });
       } else {
         socket.emit("waitingForOpponent", {
           message: "Waiting for opponent...",
@@ -276,12 +250,12 @@ io.on("connection", (socket) => {
         // Player declined - kick guest and close room
         if (room.guestUserId === userId) {
           kickPlayerFromRoom(room.guestUserId);
-          io.to(`room_${roomId}`).emit("playerKicked", {
+          io.emit("playerKicked", {
             userId: room.guestUserId,
             reason: "Host declined new match",
           });
         } else {
-          io.to(`room_${roomId}`).emit("matchDeclined", { roomId });
+          io.emit("matchDeclined", { roomId });
         }
         return;
       }
@@ -290,7 +264,7 @@ io.on("connection", (socket) => {
       await updateRoomStatus(roomId, "playing");
       const matchInfo = await startMatch(roomId);
 
-      io.to(`room_${roomId}`).emit("newMatchStarted", {
+      io.emit("newMatchStarted", {
         roomId,
         matchId: matchInfo.matchId,
         redPlayerId: room.redPlayerId,
@@ -307,68 +281,54 @@ io.on("connection", (socket) => {
    */
   socket.on("joinGame", async (data) => {
     try {
-      const { userId, roomId: roomIdRaw } = data;
-      const roomId = Number(roomIdRaw);
+      const { userId, roomId } = data;
+
       if (!userId || !roomId) {
         socket.emit("error", { message: "User ID and Room ID required" });
         return;
       }
+
       const room = getRoomById(roomId);
       if (!room) {
         socket.emit("error", { message: "Room not found" });
         return;
       }
+
       // Store user info in socket
       socket.data.userId = userId;
       socket.data.roomId = roomId;
-      socket.data.username =
-        room.player1.userId === userId
-          ? room.player1.username
-          : room.player2.username;
-      // Join Socket.IO room
+
+      // Join Socket.IO room for targeted broadcasts
       socket.join(`room_${roomId}`);
-      const roomMembers = await io.in(`room_${roomId}`).fetchSockets();
-      const memberIds = roomMembers.map((s) => s.data?.userId).filter(Boolean);
-      console.log(
-        `Player ${userId} joined room_${roomId}. Room members: ${memberIds.join(", ")} (total: ${roomMembers.length})`,
-      );
-      // Gửi thông tin đầy đủ về cả 2 người chơi
-      const redPlayerName =
-        room.player1.role === "red"
-          ? room.player1.username
-          : room.player2.username;
-      const blackPlayerName =
-        room.player1.role === "black"
-          ? room.player1.username
-          : room.player2.username;
+      console.log(`🎯 Player ${userId} joined room_${roomId}`);
+
       socket.emit("gameReady", {
         roomId,
         roomCode: room.roomCode,
         myRole: userId === room.redPlayerId ? "red" : "black",
-        redPlayerName,
-        blackPlayerName,
+        redPlayerName:
+          room.player1.role === "red"
+            ? room.player1.username
+            : room.player2.username,
+        blackPlayerName:
+          room.player1.role === "black"
+            ? room.player1.username
+            : room.player2.username,
         redPlayerId: room.redPlayerId,
         blackPlayerId: room.blackPlayerId,
-        opponentName:
-          userId === room.redPlayerId ? blackPlayerName : redPlayerName,
-        opponentAvatar: "", // Thêm avatar nếu có
-        myName: socket.data.username,
-        myAvatar: "", // Thêm avatar nếu có
-        joinedSuccessfully: true,
+        roomId: roomId,
       });
-      // Kiểm tra cả 2 đã join chưa
-      const roomSockets = await io.in(`room_${roomId}`).fetchSockets();
-      console.log(`👥 Room ${roomId} has ${roomSockets.length} players`);
-      if (roomSockets.length === 2) {
-        const matchInfo = await startMatch(roomId);
 
-        io.to(`room_${roomId}`).emit("gameStarted", {
-          roomId,
-          matchId: matchInfo.matchId,
-          redPlayerId: room.redPlayerId,
-          blackPlayerId: room.blackPlayerId,
-        });
-      }
+      // Start the match after both players join
+      const matchInfo = await startMatch(roomId);
+
+      // Broadcast game started to room only
+      io.to(`room_${roomId}`).emit("gameStarted", {
+        roomId,
+        matchId: matchInfo.matchId,
+        redPlayerId: room.redPlayerId,
+        blackPlayerId: room.blackPlayerId,
+      });
     } catch (error) {
       console.error("❌ Error in joinGame:", error);
       socket.emit("error", { message: error.message });
@@ -380,44 +340,23 @@ io.on("connection", (socket) => {
    */
   socket.on("makeMove", async (data) => {
     try {
-      const { roomId: roomIdRaw, matchId, playerId, fromPos, toPos } = data;
-      const roomId = Number(roomIdRaw || socket.data.roomId);
-
-      console.log(
-        `🎮 makeMove event received: roomId=${roomId}, matchId=${matchId}, playerId=${playerId}, fromPos=${fromPos}, toPos=${toPos}`,
-      );
+      const { matchId, playerId, fromPos, toPos, turnNumber } = data;
 
       // Validate required fields
-      if (!roomId || !matchId || !playerId || !fromPos || !toPos) {
-        console.log(
-          `❌ Missing fields: roomId=${roomId}, matchId=${matchId}, playerId=${playerId}, fromPos=${fromPos}, toPos=${toPos}`,
-        );
+      if (!matchId || !playerId || !fromPos || !toPos) {
         socket.emit("error", { message: "Missing required move data" });
         return;
       }
 
-      // Ensure socket has the correct room association
-      if (!socket.data.roomId) {
-        socket.data.roomId = roomId;
-      }
-
       // Get room info
-      const room = getRoomById(roomId);
+      const room = getRoomById(socket.data.roomId);
       if (!room) {
-        console.log(`❌ Room not found: roomId=${roomId}`);
         socket.emit("error", { message: "Room not found" });
         return;
       }
 
-      console.log(
-        `✅ Room found: ${roomId}, red=${room.redPlayerId}, black=${room.blackPlayerId}`,
-      );
-
       // Validate player is in this room
       if (playerId !== room.redPlayerId && playerId !== room.blackPlayerId) {
-        console.log(
-          `❌ Player ${playerId} not in room ${roomId}. Red=${room.redPlayerId}, Black=${room.blackPlayerId}`,
-        );
         socket.emit("error", { message: "You are not a player in this match" });
         return;
       }
@@ -426,51 +365,35 @@ io.on("connection", (socket) => {
       const isRedPlayer = playerId === room.redPlayerId;
       const isBlackPlayer = playerId === room.blackPlayerId;
 
-      const match = await getMatch(matchId);
-      const currentTurn = match.turn_number;
-
+      // Get current turn from match (simple alternation - red starts, odd turns = red, even turns = black)
       const expectedPlayerId =
-        currentTurn % 2 === 1 ? room.redPlayerId : room.blackPlayerId;
+        turnNumber % 2 === 1 ? room.redPlayerId : room.blackPlayerId;
 
       if (playerId !== expectedPlayerId) {
+        const currentTurnColor = turnNumber % 2 === 1 ? "red" : "black";
         socket.emit("error", {
-          message: `Not your turn!`,
+          message: `Not your turn! ${currentTurnColor === "red" ? "Red" : "Black"}'s turn`,
           notYourTurn: true,
         });
         return;
       }
 
       // Save move to database
-      await saveMove(matchId, playerId, currentTurn, fromPos, toPos);
-      console.log(
-        `✅ Move saved to DB: matchId=${matchId}, playerId=${playerId}, ${fromPos} → ${toPos}`,
-      );
-      // 🔥 tăng turn ở server
-      await incrementTurn(matchId);
-
-      // Determine player role for the move
-      const playerRole = playerId === room.redPlayerId ? "red" : "black";
-
-      // Get room members before broadcasting
-      const roomSockets = await io.in(`room_${roomId}`).fetchSockets();
-      console.log(
-        `👥 Broadcasting to room_${roomId}: ${roomSockets.length} players connected`,
-      );
+      await saveMove(matchId, playerId, turnNumber, fromPos, toPos);
 
       // Broadcast move to BOTH players in the room (using room-based emission)
-      io.to(`room_${roomId}`).emit("moveMade", {
-        roomId,
+      io.to(`room_${socket.data.roomId}`).emit("moveMade", {
+        roomId: socket.data.roomId,
         matchId,
         playerId,
-        playerRole,
         fromPos,
         toPos,
-        turnNumber: currentTurn + 1, // gửi turn đã được increment ở server
+        turnNumber,
         timestamp: new Date(),
       });
 
       console.log(
-        `📍 Move broadcasted to room_${roomId}: ${fromPos} → ${toPos}`,
+        `📍 Move made by player ${playerId}: ${fromPos} → ${toPos} (Turn ${turnNumber})`,
       );
     } catch (error) {
       console.error("❌ Error in makeMove:", error);
@@ -493,8 +416,8 @@ io.on("connection", (socket) => {
 
       await saveChatMessage(roomId, userId, messageText);
 
-      // Broadcast to room excluding sender so own message is displayed only once locally
-      socket.to(`room_${roomId}`).emit("newMessage", {
+      // Broadcast to room
+      io.emit("newMessage", {
         roomId,
         senderId: userId,
         senderName: socket.data.username,
@@ -520,7 +443,7 @@ io.on("connection", (socket) => {
       if (room) {
         await updateRoomStatus(socket.data.roomId, "ended");
 
-        io.to(`room_${socket.data.roomId}`).emit("matchEnded", {
+        io.emit("matchEnded", {
           roomId: socket.data.roomId,
           matchId,
           winnerId,
@@ -549,7 +472,7 @@ io.on("connection", (socket) => {
         await endMatch(matchId, winnerId, "resign");
         await updateRoomStatus(socket.data.roomId, "ended");
 
-        io.to(`room_${socket.data.roomId}`).emit("matchEnded", {
+        io.emit("matchEnded", {
           roomId: socket.data.roomId,
           matchId,
           winnerId,
@@ -576,41 +499,29 @@ io.on("connection", (socket) => {
       if (room) {
         if (room.hostUserId === userId) {
           // Host left - keep room open for guest to rejoin
-          io.to(`room_${roomId}`).emit("hostLeft", { roomId });
+          io.emit("hostLeft", { roomId });
         } else if (room.guestUserId === userId) {
           // Guest left - close room and notify host
           kickPlayerFromRoom(userId);
-          io.to(`room_${roomId}`).emit("guestLeft", { roomId });
+          io.emit("guestLeft", { roomId });
         }
       }
     } catch (error) {
       console.error("❌ Error in leaveRoom:", error);
     }
   });
-  socket.data.userId = userId; // nếu userId có
+
   /**
    * Disconnect handler
    */
-  socket.on("disconnect", (reason) => {
+  socket.on("disconnect", () => {
+    console.log(`📴 Client disconnected: ${socket.id}`);
+
     const userId = socket.data.userId;
-
-    console.log(`❌ Disconnected: ${userId} | Reason: ${reason}`);
-
-    if (!userId) return;
-
-    const timer = setTimeout(() => {
-      console.log(`💀 User ${userId} really left`);
-
+    if (userId) {
       removeWaitingPlayer(userId);
-
-      io.emit("waitingPlayersUpdate", {
-        count: getWaitingPlayersCount(),
-      });
-
-      disconnectTimers.delete(userId);
-    }, 5000); // ⏱️ delay 5s
-
-    disconnectTimers.set(userId, timer);
+      io.emit("waitingPlayersUpdate", { count: getWaitingPlayersCount() });
+    }
   });
 });
 
@@ -634,9 +545,9 @@ async function startServer() {
 ╔════════════════════════════════════════╗
 ║      🏮 Cờ Tướng Server Started 🏮     ║
 ╠════════════════════════════════════════╣
-║  Server: http://localhost:${PORT}         ║
-║  WebSocket: ws://localhost:${PORT}        ║
-║  Environment: ${process.env.NODE_ENV || "development"}              ║
+║  Server: http://localhost:${PORT}       ║
+║  WebSocket: ws://localhost:${PORT}      ║
+║  Environment: ${process.env.NODE_ENV || "development"}  ║
 ╚════════════════════════════════════════╝
       `);
     });
