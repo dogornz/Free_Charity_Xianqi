@@ -2,34 +2,37 @@
 let socket = null;
 let currentUser = null;
 
+window.addEventListener("pageshow", async (event) => {
+  if (event.persisted) {
+    console.log("Page restored from cache → reload user");
+
+    document.addEventListener("DOMContentLoaded", loadUserData);
+  }
+});
 /**
  * Initialize dashboard
  */
-document.addEventListener("DOMContentLoaded", async () => {
-  // Load user from sessionStorage first, then fallback to localStorage
-  const userDataStr =
-    sessionStorage.getItem("currentUser") ||
-    localStorage.getItem("userData") ||
-    localStorage.getItem("user");
-
-  const token =
-    sessionStorage.getItem("token") || localStorage.getItem("token");
+document.addEventListener("DOMContentLoaded", () => {
+  const userDataStr = localStorage.getItem("userData");
 
   if (!userDataStr) {
-    // Redirect to login if not authenticated
     window.location.href = "/";
     return;
   }
 
   try {
     currentUser = JSON.parse(userDataStr);
+
+    // Normalize ID
     currentUser.userId = currentUser.userId || currentUser.user_id;
     currentUser.user_id = currentUser.user_id || currentUser.userId;
+
     updateDashboardUI(currentUser);
     initializeDashboardSocket(currentUser);
     setupDashboardEventListeners();
   } catch (error) {
     console.error("❌ Error parsing user data:", error);
+    localStorage.removeItem("userData"); // 🔥 tránh user lỗi
     window.location.href = "/";
   }
 });
@@ -133,7 +136,41 @@ function updateDashboardUI(user) {
     console.error("❌ Error updating dashboard:", error);
   }
 }
+async function loadUserData() {
+  const token = localStorage.getItem("token");
+  if (!token) {
+    window.location.href = "login.html";
+    return;
+  }
 
+  try {
+    const response = await fetch(`${API_URL}/auth/user`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) throw new Error("Unauthorized");
+
+    const data = await response.json();
+    const userData = data.user;
+
+    // update UI
+    document.getElementById("userName").textContent =
+      userData.full_name || userData.username;
+
+    // ... (các field khác)
+
+    // init socket (chỉ 1 lần)
+    if (!window.socketInitialized) {
+      initializeSocket(userData.user_id, userData);
+      window.socketInitialized = true;
+    }
+  } catch (err) {
+    localStorage.clear();
+    window.location.href = "login.html";
+  }
+}
 /**
  * Setup dashboard event listeners
  */
@@ -251,7 +288,11 @@ function onSearchRoomClick(roomCode) {
 function onLogout() {
   if (confirm("Bạn có chắc chắn muốn đăng xuất?")) {
     localStorage.removeItem("userData");
+    localStorage.removeItem("user");
     localStorage.removeItem("token");
+
+    sessionStorage.clear();
+
     window.location.href = "/";
   }
 }

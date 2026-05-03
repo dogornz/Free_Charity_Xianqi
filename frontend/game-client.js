@@ -37,6 +37,7 @@ function leaveRoom() {
     return;
   }
   socket.emit("leaveRoom", { roomId: currentRoom.roomId });
+
   window.location.href = "/dashboard";
 }
 
@@ -212,6 +213,9 @@ function setupGameEventListeners() {
         user_id: currentUser.userId,
       }),
     );
+
+    localStorage.setItem("userData", JSON.stringify(currentUser));
+
     sessionStorage.setItem("roomCode", data.roomCode);
     sessionStorage.setItem("myRole", myRole);
     sessionStorage.setItem("redPlayerId", data.redPlayerId);
@@ -336,6 +340,8 @@ function setupGameEventListeners() {
   socket.on("playerKicked", (data) => {
     console.log("🚫 Player kicked:", data);
     showMessage("You were kicked from the room: " + data.reason, "error");
+
+    localStorage.setItem("userData", JSON.stringify(currentUser));
     setTimeout(() => {
       window.location.href = "/dashboard";
     }, 3000);

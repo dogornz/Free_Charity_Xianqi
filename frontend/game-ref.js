@@ -6,7 +6,15 @@ const RIVER_END = 4;
 const MOBILE_BREAKPOINT = 768;
 const TABLET_BREAKPOINT = 1024;
 const ASSET_VERSION = Date.now();
-
+const PIECE_NAME_MAP = {
+  king: "Tướng",
+  advisor: "Sĩ",
+  elephant: "Tượng",
+  horse: "Mã",
+  chariot: "Xe",
+  cannon: "Pháo",
+  pawn: "Tốt",
+};
 // Game State
 let gameState = {
   selectedSquare: null,
@@ -1259,8 +1267,12 @@ function movePiece(fromRow, fromCol, toRow, toCol) {
   }
 
   // Add move to history
+  const pieceName = PIECE_NAME_MAP[pieceObj.type] || pieceObj.type;
+  const colorName = pieceObj.color === "red" ? "Đỏ" : "Đen";
+
   const captureInfo = capturedPieceKey ? " x" : "";
-  const moveNotation = `${pieceObj.type}${captureInfo}: ${fromRow},${fromCol} → ${toRow},${toCol}`;
+
+  const moveNotation = `${pieceName} ${colorName}${captureInfo}: ${fromRow},${fromCol} -> ${toRow},${toCol}`;
   addMoveToHistory(moveNotation);
 
   // Send move via Socket.io
@@ -1360,13 +1372,18 @@ function applyRemoteMove(fromRow, fromCol, toRow, toCol) {
   // Remove captured piece
   if (capturedPieceKey) {
     delete gameState.pieces[capturedPieceKey];
+    const movingColor = pieceObj.color;
+    addCapturedPiece(movingColor, capturedPieceKey);
   }
 
   // Add move to history
-  const captureInfo = capturedPieceKey ? " x" : "";
-  const moveNotation = `${pieceObj.type}${captureInfo}: ${fromRow},${fromCol} → ${toRow},${toCol}`;
-  addMoveToHistory(moveNotation);
+  const pieceName = PIECE_NAME_MAP[pieceObj.type] || pieceObj.type;
+  const colorName = pieceObj.color === "red" ? "Đỏ" : "Đen";
 
+  const captureInfo = capturedPieceKey ? " x" : "";
+
+  const moveNotation = `${pieceName} ${colorName}${captureInfo}: ${fromRow},${fromCol} -> ${toRow},${toCol}`;
+  addMoveToHistory(moveNotation);
   // Save last move
   gameState.lastMove = { fromRow, fromCol, toRow, toCol };
 
@@ -1541,7 +1558,7 @@ function endGame(reason = "normal") {
  * Add move to history
  */
 function addMoveToHistory(moveText) {
-   if (typeof moveText === "object") {
+  if (typeof moveText === "object") {
     console.warn("⚠️ moveText là object:", moveText);
     return; // ❌ không cho hiển thị
   }
@@ -1672,7 +1689,7 @@ function startGameTimer() {
   timerInterval = setInterval(() => {
     if (
       gameState.gameStatus !== "playing" &&
-      gameState.gameStatus !== "check"
+      gameState.gameStatus !== "check" || !gameState.userRole
     ) {
       clearInterval(timerInterval);
       return;

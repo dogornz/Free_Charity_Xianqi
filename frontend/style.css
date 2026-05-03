@@ -828,6 +828,10 @@ body.mobile {
   animation: fadeInMessage 0.3s ease-out;
 }
 
+.message-text, .message-time {
+  color: white;
+}
+
 @keyframes fadeInMessage {
   from {
     opacity: 0;

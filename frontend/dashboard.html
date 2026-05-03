@@ -14,10 +14,6 @@
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
       rel="stylesheet"
     />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
-      rel="stylesheet"
-    />
     <script id="tailwind-config">
       tailwind.config = {
         darkMode: "class",
@@ -758,9 +754,6 @@
       // Check authentication on page load
       document.addEventListener("DOMContentLoaded", async () => {
         const token = localStorage.getItem("token");
-        const user = JSON.parse(sessionStorage.getItem("currentUser"));
-        if (!user) window.location.href = "/";
-
         if (!token) {
           window.location.href = "login.html";
           return;
@@ -780,6 +773,11 @@
 
           const data = await response.json();
           const userData = data.user;
+
+          sessionStorage.setItem("currentUser", JSON.stringify(userData));
+          if (typeof initializeSocket === "function") {
+            initializeSocket(userData.user_id, userData);
+          }
 
           // Update UI with user data
           document.getElementById("userName").textContent =
@@ -984,11 +982,10 @@
         document.body.style.filter = `brightness(${brightnessValue})`;
       }
       function logout() {
-        sessionStorage.removeItem("currentUser");
-        sessionStorage.removeItem("token");
-        localStorage.removeItem("user"); // xóa nốt localStorage cũ
-        localStorage.removeItem("token");
-        window.location.href = "/";
+        sessionStorage.clear();
+        localStorage.clear();
+        stopBackgroundMusic();
+        window.location.href = "login.html";
       }
     </script>
     <!-- Dashboard Socket.io Integration -->
@@ -998,24 +995,17 @@
       // Đợi DOM tải xong
       document.addEventListener("DOMContentLoaded", function () {
         const userStr = sessionStorage.getItem("currentUser");
+
         if (!userStr) {
           console.warn("No user found, redirect to login");
           window.location.href = "/";
           return;
         }
-        const user = JSON.parse(userStr);
-        user.userId = user.userId || user.user_id;
-        user.user_id = user.user_id || user.userId;
-        console.log("Dashboard: user loaded", user.userId);
 
-        // Gọi hàm khởi tạo socket (từ game-client.js)
-        if (typeof initializeSocket === "function") {
-          initializeSocket(user.userId, user);
-        } else {
-          console.error(
-            "initializeSocket not defined – make sure game-client.js is loaded",
-          );
-        }
+        // Parse JSON
+        const userData = JSON.parse(userStr);
+
+        console.log("Dashboard: user loaded", userData.user_id);
       });
     </script>
   </body>
